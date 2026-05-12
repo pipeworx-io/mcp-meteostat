@@ -1,0 +1,18 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.pipeworx-io/meteostat",
+  "title": "Meteostat",
+  "description": "Meteostat MCP — historical weather from 11k+ stations (no auth)",
+  "version": "0.1.0",
+  "websiteUrl": "https://pipeworx.io/packs/meteostat",
+  "repository": {
+    "url": "https://github.com/pipeworx-io/mcp-meteostat",
+    "source": "github"
+  },
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://gateway.pipeworx.io/meteostat/mcp"
+    }
+  ]
+}
