@@ -23,13 +23,12 @@ interface McpToolExport {
  * `weather` pack (Open-Meteo, gridded reanalysis) with station-level data:
  * actual readings from physical weather stations, not interpolated.
  *
- * Finding station IDs: visit https://meteostat.net, search a place, the URL
- * ends in the numeric station ID (e.g., 72494 = San Francisco Intl).
- * Meteostat's public free tier doesn't expose a search API, so station_id is
- * required input. For a hosted search, use their RapidAPI plan.
+ * Finding station IDs: use find_stations (search by name/country/proximity
+ * over the bulk station catalog) — no need to leave the platform.
  *
  * API: https://dev.meteostat.net/bulk
  * Tools:
+ * - find_stations:       look up station IDs by name / country / lat-lon
  * - get_daily_history:   daily values between two dates
  * - get_monthly_normals: 30-year monthly climate normals
  */
@@ -40,13 +39,29 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 const tools: McpToolExport['tools'] = [
   {
-    name: 'get_daily_history',
+    name: 'find_stations',
     description:
-      'Daily historical weather for a Meteostat station between two dates. Returns date-keyed temperature (avg/min/max), precipitation, snow, wind, pressure, sun hours. Station IDs are numeric — find them at meteostat.net (URL suffix).',
+      'Find Meteostat weather station IDs by place name and/or geographic proximity — the lookup you need BEFORE get_daily_history / get_monthly_normals (which require a station_id). Search by name ("San Francisco", "Heathrow"), filter by country (ISO-2 like "US", "GB"), and/or rank by nearest to a lat/lon. Returns each station\'s id, name, country, region, coordinates, elevation, timezone, and data inventory (which granularities — hourly/daily/monthly — are available and their date ranges, so you can pick a station that actually has the period you need). Use for "weather station near X", "what is the station ID for Y", "stations in country Z".',
     inputSchema: {
       type: 'object',
       properties: {
-        station_id: { type: 'string', description: 'Meteostat numeric station ID (e.g., "72494")' },
+        query: { type: 'string', description: 'Station/place name substring (case-insensitive), e.g. "Heathrow", "San Francisco".' },
+        country: { type: 'string', description: 'ISO-2 country code filter (e.g. "US", "GB", "DE").' },
+        near_lat: { type: 'number', description: 'Latitude to rank stations by proximity (pair with near_lon).' },
+        near_lon: { type: 'number', description: 'Longitude to rank stations by proximity (pair with near_lat).' },
+        limit: { type: 'number', description: 'Max stations to return (1-50, default 10).' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'get_daily_history',
+    description:
+      'Daily historical weather for a Meteostat station between two dates. Returns date-keyed temperature (avg/min/max), precipitation, snow, wind, pressure, sun hours. Get a station_id from find_stations.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        station_id: { type: 'string', description: 'Meteostat station ID (e.g., "72494") — from find_stations' },
         start_date: { type: 'string', description: 'YYYY-MM-DD inclusive' },
         end_date: { type: 'string', description: 'YYYY-MM-DD inclusive' },
       },
@@ -60,7 +75,7 @@ const tools: McpToolExport['tools'] = [
     inputSchema: {
       type: 'object',
       properties: {
-        station_id: { type: 'string', description: 'Meteostat numeric station ID' },
+        station_id: { type: 'string', description: 'Meteostat station ID — from find_stations' },
       },
       required: ['station_id'],
     },
@@ -69,6 +84,14 @@ const tools: McpToolExport['tools'] = [
 
 async function callTool(name: string, args: Record<string, unknown>): Promise<unknown> {
   switch (name) {
+    case 'find_stations':
+      return findStations(
+        args.query as string | undefined,
+        args.country as string | undefined,
+        args.near_lat as number | undefined,
+        args.near_lon as number | undefined,
+        (args.limit as number) ?? 10,
+      );
     case 'get_daily_history':
       return getDailyHistory(
         reqStr(args, 'station_id', '"72494" (KSFO)'),
@@ -88,6 +111,94 @@ function reqStr(args: Record<string, unknown>, key: string, example: string): st
     throw new Error(`Required argument "${key}" is missing or empty. Pass a string like ${example}.`);
   }
   return v;
+}
+
+// ── Station search ───────────────────────────────────────────────────
+// The full station catalog (~22k stations) as gzipped JSON. The pack header
+// used to say "no search API exists" — but this bulk dump gives us one. Each
+// station's `id` is the same key the daily/normals/hourly bulk files use
+// (alphanumeric, e.g. "00FAY" or "72494").
+
+interface RawStation {
+  id: string;
+  name?: { en?: string };
+  country?: string;
+  region?: string;
+  identifiers?: { national?: string; wmo?: string; icao?: string };
+  location?: { latitude?: number; longitude?: number; elevation?: number };
+  timezone?: string;
+  inventory?: Record<string, { start?: string | number | null; end?: string | number | null }>;
+}
+
+let stationsCache: RawStation[] | null = null;
+
+async function loadStations(): Promise<RawStation[]> {
+  if (stationsCache) return stationsCache;
+  const text = await fetchGzipText(`${BULK_BASE}/stations/full.json.gz`);
+  stationsCache = JSON.parse(text) as RawStation[];
+  return stationsCache;
+}
+
+function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371;
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function shapeStation(s: RawStation, distanceKm?: number) {
+  return {
+    station_id: s.id,
+    name: s.name?.en ?? null,
+    country: s.country ?? null,
+    region: s.region ?? null,
+    identifiers: s.identifiers ?? null,
+    latitude: s.location?.latitude ?? null,
+    longitude: s.location?.longitude ?? null,
+    elevation_m: s.location?.elevation ?? null,
+    timezone: s.timezone ?? null,
+    inventory: s.inventory ?? null,
+    ...(distanceKm != null ? { distance_km: Math.round(distanceKm * 10) / 10 } : {}),
+  };
+}
+
+async function findStations(
+  query: string | undefined,
+  country: string | undefined,
+  nearLat: number | undefined,
+  nearLon: number | undefined,
+  limit: number,
+) {
+  const hasProximity = typeof nearLat === 'number' && typeof nearLon === 'number';
+  if (!query?.trim() && !country?.trim() && !hasProximity) {
+    throw new Error('Provide at least one of: query (place name), country (ISO-2), or near_lat + near_lon.');
+  }
+  const cap = Math.min(50, Math.max(1, limit));
+  const q = query?.toLowerCase().trim();
+  const cc = country?.toUpperCase().trim();
+
+  const stations = await loadStations();
+  const matches = stations.filter((s) => {
+    if (cc && (s.country ?? '').toUpperCase() !== cc) return false;
+    if (q && !(s.name?.en ?? '').toLowerCase().includes(q)) return false;
+    return true;
+  });
+
+  if (hasProximity) {
+    const ranked = matches
+      .filter((s) => typeof s.location?.latitude === 'number' && typeof s.location?.longitude === 'number')
+      .map((s) => ({ s, d: haversineKm(nearLat!, nearLon!, s.location!.latitude!, s.location!.longitude!) }))
+      .sort((a, b) => a.d - b.d)
+      .slice(0, cap);
+    return { total_matched: matches.length, stations: ranked.map(({ s, d }) => shapeStation(s, d)) };
+  }
+
+  return {
+    total_matched: matches.length,
+    stations: matches.slice(0, cap).map((s) => shapeStation(s)),
+  };
 }
 
 async function fetchGzipText(url: string): Promise<string> {
@@ -146,7 +257,7 @@ async function getDailyHistory(stationId: string, start: string, end: string) {
   }
   if (start > end) throw new Error('start_date must be <= end_date');
   const id = stationId.trim();
-  if (!/^\d+$/.test(id)) throw new Error('station_id must be a numeric Meteostat ID');
+  if (!/^[A-Za-z0-9]+$/.test(id)) throw new Error('station_id must be a Meteostat station ID (alphanumeric, e.g. "72494" or "00FAY" — use find_stations to look one up)');
 
   const text = await fetchGzipText(`${BULK_BASE}/daily/${id}.csv.gz`);
   const rows = parseCsv(text);
@@ -186,7 +297,7 @@ async function getDailyHistory(stationId: string, start: string, end: string) {
 
 async function getMonthlyNormals(stationId: string) {
   const id = stationId.trim();
-  if (!/^\d+$/.test(id)) throw new Error('station_id must be a numeric Meteostat ID');
+  if (!/^[A-Za-z0-9]+$/.test(id)) throw new Error('station_id must be a Meteostat station ID (alphanumeric, e.g. "72494" or "00FAY" — use find_stations to look one up)');
 
   const text = await fetchGzipText(`${BULK_BASE}/normals/${id}.csv.gz`);
   const rows = parseCsv(text);

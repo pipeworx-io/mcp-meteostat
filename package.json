@@ -1,6 +1,6 @@
 {
   "name": "@pipeworx/mcp-meteostat",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Meteostat MCP — historical weather from 11k+ stations (no auth)",
   "type": "module",
   "main": "src/index.ts",
