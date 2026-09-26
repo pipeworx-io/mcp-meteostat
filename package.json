@@ -1,6 +1,6 @@
 {
   "name": "@pipeworx/mcp-meteostat",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Meteostat MCP — historical weather from 11k+ stations (no auth)",
   "type": "module",
   "main": "src/index.ts",
@@ -26,7 +26,7 @@
     "@cloudflare/workers-types": "^4.20260405.1"
   },
   "pipeworx": {
-    "sourceHash": "v1-bd00ac9dd18b128642cdbf2863b9b0ee10304c9f40ce51d85039b0d8a451a191",
-    "sourceCommit": "adb69d997f82a62e8e22b594488c7d04a227db35"
+    "sourceHash": "v1-a1d2097f52b0bd85936008e9a01f03874632d1fe5a4f966b48c2d5ef27ae94fd",
+    "sourceCommit": "6182c4cfebddb94950e060b5d2fca18f18ad1aca"
   }
 }
