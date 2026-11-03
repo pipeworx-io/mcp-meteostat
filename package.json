@@ -1,6 +1,6 @@
 {
   "name": "@pipeworx/mcp-meteostat",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Meteostat MCP — historical weather from 11k+ stations (no auth)",
   "type": "module",
   "main": "lib/index.js",
@@ -27,7 +27,7 @@
     "mode": "gateway",
     "slug": "meteostat",
     "gatewaySlug": "meteostat",
-    "sourceHash": "v1-ca28176cb4adfbfe27945e1356566db7eee7a5fa0e8f9eb5ed059286c6a9b9ba",
-    "sourceCommit": "5c89d6abb778d45da5d92002eb251978622bedf9"
+    "sourceHash": "v1-1c87df7fdaebbe8b63828a7ed1a21f7f8d18e64a96fabdaead057873e6aba2e9",
+    "sourceCommit": "56cf550e46fed96c0101a3877ccaf8357eecf016"
   }
 }
